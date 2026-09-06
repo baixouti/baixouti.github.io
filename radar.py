@@ -1123,9 +1123,53 @@ def assinatura(titulo: str) -> str:
     return " ".join(sorted(set(w for w in palavras if len(w) > 2))[:6])
 
 
+_TOKEN_ML: dict[str, Any] = {"valor": None, "expira": 0.0}
+
+
+def token_ml() -> str:
+    """Devolve um token da API do Mercado Livre, ou string vazia.
+
+    Usa ML_CLIENT_ID + ML_CLIENT_SECRET para pedir um token novo a cada
+    rodada. E o unico jeito que funciona: token do Mercado Livre expira em
+    6 horas, e este projeto roda de 2 em 2 horas - um token colado a mao
+    pararia de funcionar no mesmo dia.
+
+    Sem as credenciais, tenta a busca sem autenticacao mesmo.
+    """
+    cid, segredo = env("ML_CLIENT_ID"), env("ML_CLIENT_SECRET")
+    if not (cid and segredo):
+        return ""
+
+    if _TOKEN_ML["valor"] and time.time() < _TOKEN_ML["expira"]:
+        return str(_TOKEN_ML["valor"])
+
+    try:
+        resp = requests.post(
+            "https://api.mercadolibre.com/oauth/token",
+            data={"grant_type": "client_credentials",
+                  "client_id": cid, "client_secret": segredo},
+            headers={"Accept": "application/json",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+            timeout=25)
+    except requests.RequestException as erro:
+        print(f"  nao consegui falar com o Mercado Livre: {erro}")
+        return ""
+
+    if resp.status_code != 200:
+        print(f"  o Mercado Livre recusou as credenciais (HTTP {resp.status_code}).")
+        print("  Confira ML_CLIENT_ID e ML_CLIENT_SECRET, e que a aplicacao tem")
+        print("  o fluxo 'Client Credentials' habilitado no DevCenter.")
+        return ""
+
+    dados = resp.json()
+    _TOKEN_ML["valor"] = dados.get("access_token")
+    _TOKEN_ML["expira"] = time.time() + int(dados.get("expires_in", 21600)) - 300
+    return str(_TOKEN_ML["valor"] or "")
+
+
 def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[dict]:
     cabecalhos = {}
-    token = env("ML_ACCESS_TOKEN")
+    token = token_ml()
     if token:
         cabecalhos["Authorization"] = f"Bearer {token}"
     try:
@@ -1137,7 +1181,8 @@ def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[di
     if resp.status_code in (401, 403):
         print("\n  A API do Mercado Livre pediu autenticacao.")
         print("  Crie uma aplicacao em https://developers.mercadolivre.com.br/devcenter")
-        print("  e salve o token no secret ML_ACCESS_TOKEN.")
+        print("  e salve os secrets ML_CLIENT_ID e ML_CLIENT_SECRET.")
+        print("  (Nao use ML_ACCESS_TOKEN: o token do ML expira em 6 horas.)")
         raise SystemExit(1)
     if resp.status_code != 200:
         print(f"    HTTP {resp.status_code}")
@@ -1460,6 +1505,27 @@ def cmd_diagnostico() -> int:
                f"Nao ha nada a fazer alem de esperar.")
     if pend:
         linhas.append(f"[!]   {pend} oferta(s) esperando aprovacao no Telegram")
+    cid, seg = env("ML_CLIENT_ID"), env("ML_CLIENT_SECRET")
+    if env("ML_ACCESS_TOKEN"):
+        linhas.append("[!]   Existe um secret ML_ACCESS_TOKEN. Ele nao e mais usado "
+                      "e pode ser apagado.")
+    if cid and seg:
+        linhas.append(f"[ok]  ML_CLIENT_ID chegou ({len(cid)} caracteres)")
+        linhas.append(f"[ok]  ML_CLIENT_SECRET chegou ({len(seg)} caracteres)")
+        if token_ml():
+            linhas.append("[ok]  Mercado Livre aceitou as credenciais")
+        else:
+            faltando += 1
+            linhas.append("[X]   Mercado Livre recusou as credenciais")
+            linhas.append("        -> Confira se ML_CLIENT_ID e o App ID (so numeros) "
+                          "e se a aplicacao tem 'Client Credentials' habilitado")
+    else:
+        ausentes = [n for n, v in (("ML_CLIENT_ID", cid), ("ML_CLIENT_SECRET", seg)) if not v]
+        if ausentes:
+            linhas.append(f"[--]  Mercado Livre: nao chegou {' nem '.join(ausentes)}")
+            linhas.append("        -> Se voce ja criou o secret, o problema e que o "
+                          "painel.yml nao esta repassando. Confira se voce atualizou "
+                          "o painel.yml com a versao nova.")
     linhas.append("[ok]  AMAZON_TAG configurado" if env("AMAZON_TAG")
                   else "[--]  AMAZON_TAG vazio (normal - a Amazon fica para o final)")
 
