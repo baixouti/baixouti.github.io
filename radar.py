@@ -1179,10 +1179,30 @@ def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[di
         print(f"    erro de rede: {erro}")
         return []
     if resp.status_code in (401, 403):
-        print("\n  A API do Mercado Livre pediu autenticacao.")
-        print("  Crie uma aplicacao em https://developers.mercadolivre.com.br/devcenter")
-        print("  e salve os secrets ML_CLIENT_ID e ML_CLIENT_SECRET.")
-        print("  (Nao use ML_ACCESS_TOKEN: o token do ML expira em 6 horas.)")
+        cid, seg = env("ML_CLIENT_ID"), env("ML_CLIENT_SECRET")
+        print("\n  A API do Mercado Livre pediu autenticacao.\n")
+        if not (cid and seg):
+            ausentes = [n for n, v in (("ML_CLIENT_ID", cid),
+                                       ("ML_CLIENT_SECRET", seg)) if not v]
+            print(f"  CAUSA: {' e '.join(ausentes)} nao chegou ate o programa.")
+            print()
+            print("  Se voce JA criou esse(s) secret(s), entao o arquivo")
+            print("  .github/workflows/painel.yml esta desatualizado: ele precisa ter")
+            print("  estas duas linhas dentro do bloco 'env:' do job, com 6 espacos")
+            print("  de recuo, logo abaixo de AMAZON_TAG:")
+            print()
+            print("      ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}")
+            print("      ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}")
+            print()
+            print("  O GitHub so entrega ao programa os secrets que o .yml pedir")
+            print("  pelo nome. Sem essas linhas, o cofre nem e consultado.")
+        else:
+            print(f"  ML_CLIENT_ID ({len(cid)} caracteres) e ML_CLIENT_SECRET "
+                  f"({len(seg)} caracteres) chegaram, mas nao valeram um token.")
+            print()
+            print("  CAUSA PROVAVEL: a aplicacao no DevCenter esta sem o fluxo")
+            print("  'Client Credentials' habilitado, ou os dois valores estao")
+            print("  trocados de lugar (o App ID e so numeros).")
         raise SystemExit(1)
     if resp.status_code != 200:
         print(f"    HTTP {resp.status_code}")
