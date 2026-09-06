@@ -1,0 +1,12 @@
+# O CATALOGO E O CORACAO DO PROJETO. Cada linha aqui e uma escolha sua.
+# Para preencher automaticamente: aba Actions > "Painel" > acao "catalogo".
+# Para editar a mao: clique no icone de lapis aqui no GitHub.
+#
+# sku       identificador seu, sem espaco. Vira o endereco da pagina no site.
+# nome      como aparece no post e no site
+# url       link limpo do produto (SEM ?tag=, sem utm_, sem ref=)
+# fonte     mercadolivre | generico
+# categoria aparece no site e nos posts
+# faixa     baixa | media | alta
+# ativo     sim | nao
+sku,nome,url,fonte,categoria,faixa,ativo
