@@ -991,6 +991,207 @@ def grafico(pontos: list[tuple[datetime, float]], largura: int = 780,
         f'{marcadores}{"".join(rotulos)}{datas}</svg>')
 
 
+PAGINA_ADICIONAR = """<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Adicionar produtos - Baixou</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400&display=swap">
+<style>
+__CSS__
+.form{background:var(--surface);border:1.5px solid var(--line);padding:24px 26px;margin-top:26px}
+.campo{display:grid;gap:7px;margin-bottom:20px}
+.campo label{font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:500;
+letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3)}
+.campo .ajuda{font-size:14.5px;color:var(--ink-3);margin:0}
+input,select,textarea{font-family:"IBM Plex Mono",monospace;font-size:15px;
+background:var(--paper);color:var(--ink);border:1.5px solid var(--line-strong);
+padding:10px 12px;width:100%;border-radius:0}
+textarea{min-height:190px;resize:vertical;line-height:1.5;font-size:13.5px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--petrol);
+outline-offset:1px;border-color:var(--petrol)}
+.dupla{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+button{font-family:"Archivo",sans-serif;font-weight:600;font-size:16px;
+background:var(--petrol);color:var(--paper);border:0;padding:14px 30px;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+button.secundario{background:none;color:var(--ink-3);border:1.5px solid var(--line-strong);
+padding:9px 16px;font-size:14px}
+.contador{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-3);
+margin-top:7px;font-variant-numeric:tabular-nums}
+.aviso{padding:15px 17px;margin-top:20px;border:1.5px solid var(--line);font-size:15.5px;
+line-height:1.5;display:none}
+.aviso.ok{display:block;background:var(--ok-soft);border-left:3px solid var(--ok);color:var(--ink-2)}
+.aviso.erro{display:block;background:var(--rust-soft);border-left:3px solid var(--rust);color:var(--ink-2)}
+.token-area{border-top:1.5px solid var(--line);margin-top:22px;padding-top:20px}
+.token-area summary{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;
+text-transform:uppercase;color:var(--ink-3);cursor:pointer}
+.token-area[open] summary{margin-bottom:16px}
+.token-area ol{font-size:15px;color:var(--ink-2);padding-left:20px;line-height:1.55}
+.token-area li{margin-bottom:7px}
+</style></head><body><div class="wrap">
+
+<header><h1>Adicionar produtos</h1>
+<p>Cole os links, escolha a categoria, envie. O robo le titulo e preco de cada um
+e grava no catalogo.</p></header>
+
+<div class="form">
+  <div class="campo">
+    <label for="urls">Links dos produtos</label>
+    <p class="ajuda">Um por linha, ou separados por espaco. Qualquer loja serve.</p>
+    <textarea id="urls" placeholder="https://produto.mercadolivre.com.br/MLB-...
+https://www.amazon.com.br/dp/...
+https://www.kabum.com.br/produto/..."></textarea>
+    <div class="contador" id="contador">0 links</div>
+  </div>
+
+  <div class="dupla">
+    <div class="campo">
+      <label for="categoria">Categoria</label>
+      <select id="categoria">__CATEGORIAS__</select>
+    </div>
+    <div class="campo">
+      <label for="faixa">Faixa de preco</label>
+      <select id="faixa">
+        <option value="baixa">baixa - ate R$ 150</option>
+        <option value="media" selected>media - R$ 150 a 800</option>
+        <option value="alta">alta - acima de R$ 800</option>
+      </select>
+    </div>
+  </div>
+
+  <button id="enviar">Enviar para o catalogo</button>
+  <div class="aviso" id="aviso"></div>
+
+  <details class="token-area" id="areaToken">
+    <summary>Chave de acesso do GitHub</summary>
+    <div class="campo">
+      <input id="token" type="password" placeholder="github_pat_...">
+      <p class="ajuda">Fica guardada so neste navegador. Nao e enviada para lugar
+      nenhum alem do proprio GitHub.</p>
+    </div>
+    <button class="secundario" id="salvarToken">Salvar neste navegador</button>
+    <ol style="margin-top:18px">
+      <li>Abra <a href="https://github.com/settings/personal-access-tokens/new"
+          target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a></li>
+      <li>Em <b>Repository access</b>, escolha <b>Only select repositories</b> e marque
+          <b>__REPO__</b></li>
+      <li>Em <b>Permissions</b> &rarr; <b>Repository permissions</b>, procure
+          <b>Actions</b> e coloque em <b>Read and write</b></li>
+      <li>Clique em <b>Generate token</b>, copie e cole aqui em cima</li>
+    </ol>
+  </details>
+</div>
+
+<footer>Esta pagina nao aparece em buscas e nao faz nada sem a sua chave de acesso.</footer>
+
+</div>
+<script>
+(function(){
+  "use strict";
+  var REPO = "__REPO__";
+  var urls = document.getElementById("urls");
+  var contador = document.getElementById("contador");
+  var aviso = document.getElementById("aviso");
+  var botao = document.getElementById("enviar");
+  var campoToken = document.getElementById("token");
+  var areaToken = document.getElementById("areaToken");
+
+  function lista(){
+    return urls.value.split(/[\s,;]+/).filter(function(u){ return u.indexOf("http") === 0; });
+  }
+  function contar(){
+    var n = lista().length;
+    contador.textContent = n + (n === 1 ? " link" : " links");
+  }
+  urls.addEventListener("input", contar);
+  contar();
+
+  function guardado(){
+    try { return localStorage.getItem("baixou_token") || ""; } catch(e){ return ""; }
+  }
+  campoToken.value = guardado();
+  if (!campoToken.value) areaToken.open = true;
+
+  document.getElementById("salvarToken").addEventListener("click", function(){
+    try {
+      localStorage.setItem("baixou_token", campoToken.value.trim());
+      mostrar("ok", "Chave guardada neste navegador.");
+      areaToken.open = false;
+    } catch(e){ mostrar("erro", "Este navegador nao deixou guardar a chave."); }
+  });
+
+  function mostrar(tipo, html){
+    aviso.className = "aviso " + tipo;
+    aviso.innerHTML = html;
+  }
+
+  botao.addEventListener("click", function(){
+    var links = lista();
+    var token = (campoToken.value || guardado()).trim();
+    if (!token) {
+      mostrar("erro", "Falta a chave de acesso do GitHub. Abra a secao abaixo.");
+      areaToken.open = true;
+      return;
+    }
+    if (!links.length) {
+      mostrar("erro", "Cole pelo menos um link comecando com http.");
+      return;
+    }
+    botao.disabled = true;
+    mostrar("ok", "Enviando " + links.length + " link(s)...");
+
+    fetch("https://api.github.com/repos/" + REPO +
+          "/actions/workflows/painel.yml/dispatches", {
+      method: "POST",
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "Authorization": "Bearer " + token,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ref: "main",
+        inputs: {
+          acao: "adicionar_varias_urls",
+          url: links.join(" "),
+          categoria: document.getElementById("categoria").value,
+          faixa: document.getElementById("faixa").value
+        }
+      })
+    }).then(function(r){
+      botao.disabled = false;
+      if (r.status === 204) {
+        mostrar("ok", "<b>" + links.length + " link(s) enviados.</b> O robo leva " +
+          "1 a 2 minutos. Acompanhe em <a target='_blank' rel='noopener' " +
+          "href='https://github.com/" + REPO + "/actions'>Actions</a>.");
+        urls.value = ""; contar();
+        return;
+      }
+      return r.json().then(function(erro){
+        var msg = (erro && erro.message) || ("HTTP " + r.status);
+        if (r.status === 401 || r.status === 403) {
+          msg = "A chave de acesso foi recusada. Confira se ela tem a permissao " +
+                "<b>Actions: Read and write</b> neste repositorio.";
+        } else if (r.status === 404) {
+          msg = "Nao encontrei o repositorio ou o arquivo painel.yml. Confira se " +
+                "a chave tem acesso a <b>" + REPO + "</b>.";
+        } else if (r.status === 422) {
+          msg = "O GitHub recusou os dados. Talvez sejam links demais de uma vez - " +
+                "tente com 20 por vez.";
+        }
+        mostrar("erro", msg);
+      });
+    }).catch(function(e){
+      botao.disabled = false;
+      mostrar("erro", "Nao consegui falar com o GitHub: " + e.message);
+    });
+  });
+})();
+</script></body></html>
+"""
+
 def pagina_produto(con: sqlite3.Connection, produto: Produto, cfg: dict) -> str | None:
     pontos = serie(con, produto.sku, 180)
     if not pontos:
@@ -1101,6 +1302,20 @@ def gerar(con: sqlite3.Connection, produtos: list[Produto], cfg: dict,
         + '</div></body></html>'
     )
     (saida / "index.html").write_text(home, encoding="utf-8")
+
+    # pagina de administracao: cola links e manda para o catalogo
+    try:
+        termos = yaml.safe_load(open(RAIZ / "termos.yaml", encoding="utf-8"))
+        nomes = list(termos.keys())
+    except Exception:
+        nomes = ["perifericos", "componentes", "monitores", "livros"]
+    opcoes = "".join(f'<option value="{html.escape(n)}">{html.escape(n)}</option>'
+                     for n in nomes)
+    (saida / "adicionar.html").write_text(
+        PAGINA_ADICIONAR.replace("__CSS__", CSS)
+                        .replace("__CATEGORIAS__", opcoes)
+                        .replace("__REPO__", cfg_site.get("repositorio", "")),
+        encoding="utf-8")
     return gerados
 
 # ======================================================================
@@ -1157,8 +1372,12 @@ def token_ml() -> str:
 
     if resp.status_code != 200:
         print(f"  o Mercado Livre recusou as credenciais (HTTP {resp.status_code}).")
-        print("  Confira ML_CLIENT_ID e ML_CLIENT_SECRET, e que a aplicacao tem")
-        print("  o fluxo 'Client Credentials' habilitado no DevCenter.")
+        try:
+            corpo = resp.json()
+            print(f"  resposta deles: error={corpo.get('error')!r} "
+                  f"message={corpo.get('message')!r}")
+        except ValueError:
+            print(f"  resposta deles: {resp.text[:300]}")
         return ""
 
     dados = resp.json()
@@ -1399,14 +1618,45 @@ def cmd_site() -> int:
     return 0
 
 
-def cmd_adicionar(url: str, categoria: str, faixa: str) -> int:
+def cmd_adicionar_varias(bruto: str, categoria: str, faixa: str) -> int:
+    """Adiciona varias URLs de uma vez.
+
+    Cole quantas quiser separadas por espaco, virgula ou quebra de linha.
+    Funciona com qualquer loja - nao depende de API nenhuma. E o caminho
+    para montar o catalogo quando a API do Mercado Livre nao coopera.
+    """
+    urls = [u for u in re.split(r"[\s,;]+", bruto.strip()) if u.startswith("http")]
+    if not urls:
+        print("Nenhuma URL valida encontrada. Cole os links comecando com http.")
+        return 2
+
+    print(f"{len(urls)} URL(s) para processar.\n")
+    ok, falhou = 0, []
+    for i, url in enumerate(urls, 1):
+        print(f"[{i}/{len(urls)}] ", end="")
+        if cmd_adicionar(url, categoria, faixa, silencioso=False) == 0:
+            ok += 1
+        else:
+            falhou.append(url)
+        print()
+
+    print(f"\n{ok} adicionado(s), {len(falhou)} falha(s).")
+    if falhou:
+        print("\nNao consegui ler estes (a loja monta o preco por JavaScript):")
+        for url in falhou:
+            print(f"  {url}")
+        print("\nProcure os mesmos produtos em outra loja.")
+    return 0
+
+
+def cmd_adicionar(url: str, categoria: str, faixa: str, silencioso: bool = False) -> int:
     cfg = carregar_config()
     url = limpar(url)
     leitura = buscar_preco("NOVO", url, cfg)
     if leitura is None:
-        print("Nao consegui ler o preco desta pagina.")
-        print("A loja provavelmente monta o preco por JavaScript. Procure o mesmo")
-        print("produto no Mercado Livre, que tem API e leitura confiavel.")
+        print(f"nao consegui ler o preco: {url[:70]}")
+        if not silencioso:
+            pass
         return 1
 
     titulo = ""
@@ -1581,6 +1831,7 @@ AJUDA = """Baixou - comandos
       --por-termo N               quantos produtos por termo (padrao 2)
       --anexar                    soma ao catalogo atual
   python radar.py adicionar URL [categoria] [faixa]
+  python radar.py adicionar_varias "URL1 URL2 URL3" [categoria] [faixa]
   python radar.py testar URL      testa a leitura de preco de uma pagina
 
   python radar.py diagnostico     confere se tudo esta configurado
@@ -1601,13 +1852,15 @@ def main(argv: list[str]) -> int:
         ap.add_argument("--anexar", action="store_true")
         args = ap.parse_args(resto)
         return cmd_catalogo(args.por_termo, args.anexar)
-    if comando == "adicionar":
+    if comando in ("adicionar", "adicionar_varias"):
         if not resto:
-            print("uso: python radar.py adicionar <url> [categoria] [faixa]")
+            print(f"uso: python radar.py {comando} <url(s)> [categoria] [faixa]")
             return 2
-        return cmd_adicionar(resto[0],
-                             resto[1] if len(resto) > 1 else "geral",
-                             resto[2] if len(resto) > 2 else "media")
+        categoria = resto[1] if len(resto) > 1 else "geral"
+        faixa = resto[2] if len(resto) > 2 else "media"
+        if comando == "adicionar_varias":
+            return cmd_adicionar_varias(resto[0], categoria, faixa)
+        return cmd_adicionar(resto[0], categoria, faixa)
     if comando == "testar":
         if not resto:
             print("uso: python radar.py testar <url>")
