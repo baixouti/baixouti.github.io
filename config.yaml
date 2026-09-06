@@ -1,0 +1,43 @@
+# ---------------------------------------------------------------
+# Regras do Radar de Precos
+# Mexa aqui, nao no codigo.
+# ---------------------------------------------------------------
+
+deteccao:
+  # Queda minima em relacao a media dos ultimos 30 dias (0.15 = 15%)
+  queda_minima: 0.15
+
+  # O preco precisa estar a no maximo X% acima da minima dos 90 dias.
+  # E isto que mata o "de R$ 899 por R$ 499" que nunca custou R$ 899.
+  margem_sobre_minima: 0.05
+
+  # Nao alerta antes de ter este tanto de leituras nos ultimos 30 dias.
+  # Com coleta de 2 em 2 horas, 60 leituras = ~5 dias de historico.
+  minimo_amostras_30d: 60
+
+  # Nao repete alerta do mesmo produto antes de N dias.
+  cooldown_dias: 14
+
+  # Ignora produto abaixo deste preco (comissao nao paga o post).
+  preco_minimo: 25.0
+
+  # Maximo de candidatos enviados para aprovacao por rodada.
+  max_candidatos_por_rodada: 8
+
+coleta:
+  # Segundos de espera entre uma requisicao e outra. Nao abaixe de 2.
+  intervalo_segundos: 3.0
+  timeout_segundos: 20
+  tentativas: 2
+  user_agent: "BaixouBot/1.0 (+https://baixouti.github.io)"
+
+site:
+  titulo: "Baixou"
+  subtitulo: "Historico real de preco para quem trabalha com TI."
+  base_url: "https://baixouti.github.io"
+  # Quantos produtos aparecem na home
+  destaques: 40
+
+telegram:
+  # Texto do rodape de cada post publicado no canal
+  rodape: "Link de afiliado. O preco pode mudar a qualquer momento."
