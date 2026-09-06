@@ -36,6 +36,8 @@ site:
   subtitulo: "Historico real de preco para quem trabalha com TI."
   base_url: "https://baixouti.github.io"
   canal_telegram: "@baixouti"
+  # usuario/repositorio no GitHub - usado pela pagina de adicionar produtos
+  repositorio: "baixouti/baixouti.github.io"
   # Quantos produtos aparecem na home
   destaques: 40
 
