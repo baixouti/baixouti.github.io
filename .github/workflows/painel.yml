@@ -51,7 +51,8 @@ jobs:
       TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
       TELEGRAM_CANAL: ${{ secrets.TELEGRAM_CANAL }}
       AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
-      ML_ACCESS_TOKEN: ${{ secrets.ML_ACCESS_TOKEN }}
+      ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}
+      ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
