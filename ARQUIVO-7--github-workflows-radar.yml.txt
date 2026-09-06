@@ -1,0 +1,92 @@
+name: Radar automatico
+
+# Roda sozinho de 2 em 2 horas. Voce nao precisa apertar nada aqui.
+# Para rodar na hora: aba Actions > Radar automatico > Run workflow.
+
+on:
+  schedule:
+    - cron: "5 */2 * * *"     # horario UTC. Brasilia = UTC-3.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: radar
+  cancel-in-progress: false
+
+jobs:
+  rodada:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+      TELEGRAM_CANAL: ${{ secrets.TELEGRAM_CANAL }}
+      AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
+      ENCURTADOR_BASE: ${{ secrets.ENCURTADOR_BASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Coletar precos
+        continue-on-error: true
+        run: python radar.py coletar | tee coleta.txt
+
+      - name: Processar o que voce aprovou
+        continue-on-error: true
+        run: python radar.py aprovacoes | tee aprovacoes.txt
+
+      - name: Detectar quedas
+        continue-on-error: true
+        run: python radar.py detectar | tee deteccao.txt
+
+      - name: Gerar o site
+        run: python radar.py site
+
+      - name: Resumo da rodada
+        if: always()
+        run: |
+          {
+            echo "## Rodada de $(date -u +'%d/%m/%Y %H:%M') UTC"
+            echo
+            echo "### Quedas detectadas"
+            echo '```'
+            tail -4 deteccao.txt 2>/dev/null || echo "(nao rodou)"
+            echo '```'
+            echo "### Aprovacoes processadas"
+            echo '```'
+            cat aprovacoes.txt 2>/dev/null || echo "(nao rodou)"
+            echo '```'
+            echo "### Coleta"
+            echo '```'
+            tail -3 coleta.txt 2>/dev/null || echo "(nao rodou)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guardar o historico de precos
+        run: |
+          git config user.name  "baixou-bot"
+          git config user.email "baixou-bot@users.noreply.github.com"
+          git add dados/precos.db
+          git diff --staged --quiet || git commit -m "precos: $(date -u +'%d/%m %H:%M') UTC"
+          git push
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publicar:
+    needs: rodada
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
