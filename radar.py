@@ -1039,7 +1039,8 @@ e grava no catalogo.</p></header>
 <div class="form">
   <div class="campo">
     <label for="urls">Links dos produtos</label>
-    <p class="ajuda">Um por linha, ou separados por espaco. Qualquer loja serve.</p>
+    <p class="ajuda">Um por linha, ou separados por espaco. Qualquer loja serve,
+    e nao ha limite de quantidade.</p>
     <textarea id="urls" placeholder="https://produto.mercadolivre.com.br/MLB-...
 https://www.amazon.com.br/dp/...
 https://www.kabum.com.br/produto/..."></textarea>
@@ -1077,8 +1078,9 @@ https://www.kabum.com.br/produto/..."></textarea>
           target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a></li>
       <li>Em <b>Repository access</b>, escolha <b>Only select repositories</b> e marque
           <b>__REPO__</b></li>
-      <li>Em <b>Permissions</b> &rarr; <b>Repository permissions</b>, procure
-          <b>Actions</b> e coloque em <b>Read and write</b></li>
+      <li>Em <b>Permissions</b> &rarr; <b>Repository permissions</b>, adicione
+          <b>duas</b> permissoes, ambas em <b>Read and write</b>:
+          <b>Actions</b> e <b>Contents</b></li>
       <li>Clique em <b>Generate token</b>, copie e cole aqui em cima</li>
     </ol>
   </details>
@@ -1127,7 +1129,36 @@ https://www.kabum.com.br/produto/..."></textarea>
     aviso.innerHTML = html;
   }
 
-  botao.addEventListener("click", function(){
+  function base64(texto){
+    var bytes = new TextEncoder().encode(texto);
+    var bruto = "";
+    bytes.forEach(function(b){ bruto += String.fromCharCode(b); });
+    return btoa(bruto);
+  }
+
+  function cabecalhos(token){
+    return {
+      "Accept": "application/vnd.github+json",
+      "Authorization": "Bearer " + token,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json"
+    };
+  }
+
+  function explicar(status, corpo){
+    if (status === 401 || status === 403) {
+      return "A chave de acesso foi recusada. Ela precisa das permissoes " +
+             "<b>Contents: Read and write</b> e <b>Actions: Read and write</b> " +
+             "neste repositorio.";
+    }
+    if (status === 404) {
+      return "Nao encontrei o repositorio <b>" + REPO + "</b>. Confira se a chave " +
+             "de acesso tem esse repositorio selecionado.";
+    }
+    return (corpo && corpo.message) || ("HTTP " + status);
+  }
+
+  botao.addEventListener("click", async function(){
     var links = lista();
     var token = (campoToken.value || guardado()).trim();
     if (!token) {
@@ -1139,54 +1170,63 @@ https://www.kabum.com.br/produto/..."></textarea>
       mostrar("erro", "Cole pelo menos um link comecando com http.");
       return;
     }
-    botao.disabled = true;
-    mostrar("ok", "Enviando " + links.length + " link(s)...");
 
-    fetch("https://api.github.com/repos/" + REPO +
-          "/actions/workflows/painel.yml/dispatches", {
-      method: "POST",
-      headers: {
-        "Accept": "application/vnd.github+json",
-        "Authorization": "Bearer " + token,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        ref: "main",
-        inputs: {
-          acao: "adicionar_varias_urls",
-          url: links.join(" "),
-          categoria: document.getElementById("categoria").value,
-          faixa: document.getElementById("faixa").value
-        }
-      })
-    }).then(function(r){
-      botao.disabled = false;
-      if (r.status === 204) {
-        mostrar("ok", "<b>" + links.length + " link(s) enviados.</b> O robo leva " +
-          "1 a 2 minutos. Acompanhe em <a target='_blank' rel='noopener' " +
-          "href='https://github.com/" + REPO + "/actions'>Actions</a>.");
-        urls.value = ""; contar();
-        return;
+    var categoria = document.getElementById("categoria").value;
+    var faixa = document.getElementById("faixa").value;
+    var base = "https://api.github.com/repos/" + REPO;
+    var cab = cabecalhos(token);
+
+    botao.disabled = true;
+    mostrar("ok", "Gravando " + links.length + " link(s) na fila...");
+
+    try {
+      // 1. descobrir se ja existe uma fila (precisa do sha para sobrescrever)
+      var sha = null;
+      var atual = await fetch(base + "/contents/fila.txt", { headers: cab });
+      if (atual.status === 200) { sha = (await atual.json()).sha; }
+      else if (atual.status !== 404) {
+        mostrar("erro", explicar(atual.status, await atual.json().catch(function(){})));
+        botao.disabled = false; return;
       }
-      return r.json().then(function(erro){
-        var msg = (erro && erro.message) || ("HTTP " + r.status);
-        if (r.status === 401 || r.status === 403) {
-          msg = "A chave de acesso foi recusada. Confira se ela tem a permissao " +
-                "<b>Actions: Read and write</b> neste repositorio.";
-        } else if (r.status === 404) {
-          msg = "Nao encontrei o repositorio ou o arquivo painel.yml. Confira se " +
-                "a chave tem acesso a <b>" + REPO + "</b>.";
-        } else if (r.status === 422) {
-          msg = "O GitHub recusou os dados. Talvez sejam links demais de uma vez - " +
-                "tente com 20 por vez.";
-        }
-        mostrar("erro", msg);
+
+      // 2. gravar o arquivo. Uma linha por link: categoria|faixa|url
+      var conteudo = links.map(function(u){
+        return categoria + "|" + faixa + "|" + u;
+      }).join("\\n") + "\\n";
+
+      var corpoPut = {
+        message: "fila: " + links.length + " link(s) em " + categoria,
+        content: base64(conteudo)
+      };
+      if (sha) { corpoPut.sha = sha; }
+
+      var gravou = await fetch(base + "/contents/fila.txt", {
+        method: "PUT", headers: cab, body: JSON.stringify(corpoPut)
       });
-    }).catch(function(e){
-      botao.disabled = false;
+      if (!gravou.ok) {
+        mostrar("erro", explicar(gravou.status, await gravou.json().catch(function(){})));
+        botao.disabled = false; return;
+      }
+
+      // 3. chamar o robo, sem passar os links pelo formulario
+      var disparo = await fetch(base + "/actions/workflows/painel.yml/dispatches", {
+        method: "POST", headers: cab,
+        body: JSON.stringify({ ref: "main", inputs: { acao: "processar_fila" } })
+      });
+      if (disparo.status !== 204) {
+        mostrar("erro", explicar(disparo.status, await disparo.json().catch(function(){})));
+        botao.disabled = false; return;
+      }
+
+      mostrar("ok", "<b>" + links.length + " link(s) enviados.</b> O robo leva de 1 a " +
+        "3 minutos, dependendo da quantidade. Acompanhe em " +
+        "<a target='_blank' rel='noopener' href='https://github.com/" + REPO +
+        "/actions'>Actions</a>.");
+      urls.value = ""; contar();
+    } catch (e) {
       mostrar("erro", "Nao consegui falar com o GitHub: " + e.message);
-    });
+    }
+    botao.disabled = false;
   });
 })();
 </script></body></html>
@@ -1701,6 +1741,54 @@ def cmd_adicionar(url: str, categoria: str, faixa: str, silencioso: bool = False
     return 0
 
 
+def cmd_fila() -> int:
+    """Processa fila.txt - a lista de links que a pagina adicionar.html gravou.
+
+    Cada linha tem o formato:  categoria|faixa|url
+
+    Nao existe limite de quantidade: o arquivo pode ter 5 ou 5000 linhas.
+    Ao terminar, a fila e esvaziada para nao reprocessar.
+    """
+    arquivo = RAIZ / "fila.txt"
+    if not arquivo.exists():
+        print("Nao ha fila para processar (fila.txt nao existe).")
+        return 0
+
+    linhas = [l.strip() for l in arquivo.read_text(encoding="utf-8").splitlines()
+              if l.strip() and not l.strip().startswith("#")]
+    if not linhas:
+        print("A fila esta vazia.")
+        return 0
+
+    print(f"{len(linhas)} link(s) na fila.\n")
+    ok, falhou = 0, []
+    for i, linha in enumerate(linhas, 1):
+        partes = linha.split("|", 2)
+        if len(partes) == 3:
+            categoria, faixa, url = (p.strip() for p in partes)
+        else:
+            categoria, faixa, url = "geral", "media", linha
+        if not url.startswith("http"):
+            continue
+        print(f"[{i}/{len(linhas)}] ", end="")
+        if cmd_adicionar(url, categoria or "geral", faixa or "media") == 0:
+            ok += 1
+        else:
+            falhou.append(url)
+        print()
+
+    arquivo.write_text("# fila processada em "
+                       f"{agora():%d/%m/%Y %H:%M} UTC\n", encoding="utf-8")
+
+    print(f"\n{ok} adicionado(s), {len(falhou)} falha(s).")
+    if falhou:
+        print("\nNao consegui ler estes (a loja monta o preco por JavaScript):")
+        for url in falhou:
+            print(f"  {url}")
+        print("\nProcure os mesmos produtos em outra loja.")
+    return 0
+
+
 def cmd_testar(url: str) -> int:
     cfg = carregar_config()
     print(f"robots.txt permite: {robots_permite(url, cfg['coleta']['user_agent'])}")
@@ -1832,6 +1920,7 @@ AJUDA = """Baixou - comandos
       --anexar                    soma ao catalogo atual
   python radar.py adicionar URL [categoria] [faixa]
   python radar.py adicionar_varias "URL1 URL2 URL3" [categoria] [faixa]
+  python radar.py fila            processa fila.txt (gravada pela pagina web)
   python radar.py testar URL      testa a leitura de preco de uma pagina
 
   python radar.py diagnostico     confere se tudo esta configurado
@@ -1870,7 +1959,7 @@ def main(argv: list[str]) -> int:
     acoes = {
         "coletar": cmd_coletar, "detectar": cmd_detectar, "aprovacoes": cmd_aprovacoes,
         "site": cmd_site, "rodada": cmd_rodada, "diagnostico": cmd_diagnostico,
-        "chatid": cmd_chatid, "demonstracao": cmd_demonstracao,
+        "chatid": cmd_chatid, "demonstracao": cmd_demonstracao, "fila": cmd_fila,
     }
     if comando not in acoes:
         print(f"comando desconhecido: {comando}\n")
