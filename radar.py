@@ -1413,6 +1413,35 @@ TOKEN_ML_URL = "https://api.mercadolibre.com/oauth/token"
 COFRE_ML = RAIZ / "dados" / "ml_token.enc"
 
 
+def app_id_ml() -> str:
+    """O App ID do Mercado Livre.
+
+    Fica no config.yaml, nao nos secrets, DE PROPOSITO: em OAuth o client_id
+    e publico (aparece na URL de autorizacao). Se ele estiver como secret, o
+    GitHub apaga o numero de qualquer saida e o link de autorizacao sai com
+    *** no lugar - inutilizavel.
+    """
+    try:
+        cfg = carregar_config().get("mercadolivre") or {}
+        do_config = str(cfg.get("app_id") or "").strip()
+        if do_config and not do_config.startswith("SEU_"):
+            return do_config
+    except Exception:
+        pass
+    return env("ML_CLIENT_ID")
+
+
+def redirect_ml() -> str:
+    try:
+        cfg = carregar_config().get("mercadolivre") or {}
+        valor = str(cfg.get("redirect_uri") or "").strip()
+        if valor:
+            return valor
+    except Exception:
+        pass
+    return env("ML_REDIRECT_URI") or "https://baixouti.github.io/"
+
+
 def _fernet():
     """Chave de criptografia derivada do secret ML_REFRESH_KEY.
 
@@ -1455,13 +1484,13 @@ def ler_refresh() -> str:
 
 def url_autorizacao() -> str:
     return (f"{AUTORIZACAO_ML}?response_type=code"
-            f"&client_id={env('ML_CLIENT_ID')}"
-            f"&redirect_uri={env('ML_REDIRECT_URI') or 'https://baixouti.github.io/'}")
+            f"&client_id={app_id_ml()}"
+            f"&redirect_uri={redirect_ml()}")
 
 
 def _trocar(dados: dict[str, str]) -> dict | None:
     """Fala com o endpoint de token do Mercado Livre."""
-    dados = dict(dados, client_id=env("ML_CLIENT_ID"),
+    dados = dict(dados, client_id=app_id_ml(),
                  client_secret=env("ML_CLIENT_SECRET"))
     try:
         resp = requests.post(TOKEN_ML_URL, data=dados, timeout=25,
@@ -1493,7 +1522,7 @@ def token_ml() -> str:
     if _TOKEN_ML["valor"] and time.time() < _TOKEN_ML["expira"]:
         return str(_TOKEN_ML["valor"])
 
-    if not (env("ML_CLIENT_ID") and env("ML_CLIENT_SECRET")):
+    if not (app_id_ml() and env("ML_CLIENT_SECRET")):
         return ""
 
     refresh = ler_refresh()
@@ -1514,8 +1543,19 @@ def token_ml() -> str:
 
 
 def cmd_ml_autorizar() -> int:
-    if not (env("ML_CLIENT_ID") and env("ML_CLIENT_SECRET")):
-        print("Faltam os secrets ML_CLIENT_ID e ML_CLIENT_SECRET.")
+    app = app_id_ml()
+    if not app:
+        print("Falta o App ID. Coloque no config.yaml, no bloco 'mercadolivre':")
+        print('    app_id: "1234567890123456"')
+        return 1
+    if "*" in app:
+        print("O App ID esta saindo mascarado (***).")
+        print("Isso acontece quando ele esta guardado como SECRET no GitHub.")
+        print("O App ID nao e segredo: apague o secret ML_CLIENT_ID e ponha o")
+        print("numero no config.yaml, no bloco 'mercadolivre'.")
+        return 1
+    if not env("ML_CLIENT_SECRET"):
+        print("Falta o secret ML_CLIENT_SECRET.")
         return 1
     if not env("ML_REFRESH_KEY"):
         print("Falta o secret ML_REFRESH_KEY.")
@@ -1555,7 +1595,7 @@ def cmd_ml_codigo(codigo: str) -> int:
     dados = _trocar({
         "grant_type": "authorization_code",
         "code": codigo,
-        "redirect_uri": env("ML_REDIRECT_URI") or "https://baixouti.github.io/",
+        "redirect_uri": redirect_ml(),
     })
     if not dados:
         print("\nSe deu 'invalid_grant': o codigo expirou ou ja foi usado.")
@@ -1588,7 +1628,7 @@ def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[di
         print(f"    erro de rede: {erro}")
         return []
     if resp.status_code in (401, 403):
-        cid, seg = env("ML_CLIENT_ID"), env("ML_CLIENT_SECRET")
+        cid, seg = app_id_ml(), env("ML_CLIENT_SECRET")
         print("\n  A API do Mercado Livre pediu autenticacao.\n")
         if not (cid and seg):
             ausentes = [n for n, v in (("ML_CLIENT_ID", cid),
@@ -2033,12 +2073,18 @@ def cmd_diagnostico() -> int:
                f"Nao ha nada a fazer alem de esperar.")
     if pend:
         linhas.append(f"[!]   {pend} oferta(s) esperando aprovacao no Telegram")
-    cid, seg = env("ML_CLIENT_ID"), env("ML_CLIENT_SECRET")
+    cid, seg = app_id_ml(), env("ML_CLIENT_SECRET")
     if env("ML_ACCESS_TOKEN"):
         linhas.append("[!]   Existe um secret ML_ACCESS_TOKEN. Ele nao e mais usado "
                       "e pode ser apagado.")
     if cid and seg:
-        linhas.append(f"[ok]  ML_CLIENT_ID chegou ({len(cid)} caracteres)")
+        if "*" in cid:
+            faltando += 1
+            linhas.append("[X]   O App ID esta mascarado (***)")
+            linhas.append("        -> Apague o secret ML_CLIENT_ID e ponha o numero "
+                          "no config.yaml, bloco 'mercadolivre'. Ele nao e segredo.")
+        else:
+            linhas.append(f"[ok]  App ID do Mercado Livre: {cid}")
         linhas.append(f"[ok]  ML_CLIENT_SECRET chegou ({len(seg)} caracteres)")
         if not env("ML_REFRESH_KEY"):
             faltando += 1
@@ -2056,7 +2102,8 @@ def cmd_diagnostico() -> int:
             linhas.append("[X]   A autorizacao do Mercado Livre nao vale mais")
             linhas.append("        -> Rode 'ml_autorizar' de novo")
     else:
-        ausentes = [n for n, v in (("ML_CLIENT_ID", cid), ("ML_CLIENT_SECRET", seg)) if not v]
+        ausentes = [n for n, v in (("app_id no config.yaml", cid),
+                                   ("ML_CLIENT_SECRET", seg)) if not v]
         if ausentes:
             linhas.append(f"[--]  Mercado Livre: nao chegou {' nem '.join(ausentes)}")
             linhas.append("        -> Se voce ja criou o secret, o problema e que o "
