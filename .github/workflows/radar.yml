@@ -25,6 +25,10 @@ jobs:
       TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
       TELEGRAM_CANAL: ${{ secrets.TELEGRAM_CANAL }}
       AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
+      ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}
+      ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}
+      ML_REFRESH_KEY: ${{ secrets.ML_REFRESH_KEY }}
+      ML_REDIRECT_URI: ${{ secrets.ML_REDIRECT_URI }}
       ENCURTADOR_BASE: ${{ secrets.ENCURTADOR_BASE }}
     steps:
       - uses: actions/checkout@v4
