@@ -1471,15 +1471,17 @@ def guardar_refresh(refresh: str) -> bool:
     return True
 
 
-def ler_refresh() -> str:
-    cofre = _fernet()
-    if not cofre or not COFRE_ML.exists():
-        return ""
+def ler_refresh() -> tuple[str, str]:
+    """Devolve (chave_de_renovacao, motivo_da_falha)."""
+    if not env("ML_REFRESH_KEY"):
+        return "", "sem_senha"
+    if not COFRE_ML.exists():
+        return "", "sem_cofre"
     try:
-        return json.loads(cofre.decrypt(COFRE_ML.read_bytes()))["refresh_token"]
+        dados = json.loads(_fernet().decrypt(COFRE_ML.read_bytes()))
+        return dados["refresh_token"], ""
     except Exception:
-        print("  nao consegui abrir o cofre - ML_REFRESH_KEY mudou?")
-        return ""
+        return "", "senha_errada"
 
 
 def url_autorizacao() -> str:
@@ -1525,8 +1527,14 @@ def token_ml() -> str:
     if not (app_id_ml() and env("ML_CLIENT_SECRET")):
         return ""
 
-    refresh = ler_refresh()
+    refresh, motivo = ler_refresh()
     if not refresh:
+        if motivo == "sem_senha":
+            print("  Falta o secret ML_REFRESH_KEY.")
+        elif motivo == "sem_cofre":
+            print("  O arquivo dados/ml_token.enc nao esta no repositorio.")
+        elif motivo == "senha_errada":
+            print("  O cofre existe mas nao abre: o ML_REFRESH_KEY mudou.")
         return ""
 
     dados = _trocar({"grant_type": "refresh_token", "refresh_token": refresh})
@@ -1628,30 +1636,26 @@ def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[di
         print(f"    erro de rede: {erro}")
         return []
     if resp.status_code in (401, 403):
-        cid, seg = app_id_ml(), env("ML_CLIENT_SECRET")
-        print("\n  A API do Mercado Livre pediu autenticacao.\n")
-        if not (cid and seg):
-            ausentes = [n for n, v in (("ML_CLIENT_ID", cid),
-                                       ("ML_CLIENT_SECRET", seg)) if not v]
-            print(f"  CAUSA: {' e '.join(ausentes)} nao chegou ate o programa.")
+        print("\n  O Mercado Livre recusou a busca por falta de autorizacao.\n")
+        _, motivo = ler_refresh()
+        if motivo == "sem_cofre":
+            print("  CAUSA: o arquivo dados/ml_token.enc nao esta no repositorio.")
             print()
-            print("  Se voce JA criou esse(s) secret(s), entao o arquivo")
-            print("  .github/workflows/painel.yml esta desatualizado: ele precisa ter")
-            print("  estas duas linhas dentro do bloco 'env:' do job, com 6 espacos")
-            print("  de recuo, logo abaixo de AMAZON_TAG:")
+            print("  A autorizacao deu certo, mas o arquivo com a chave nao chegou a")
+            print("  ser gravado no repositorio. Isso acontece quando o painel.yml e")
+            print("  uma versao antiga, que nao commitava a pasta dados.")
             print()
-            print("      ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}")
-            print("      ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}")
-            print()
-            print("  O GitHub so entrega ao programa os secrets que o .yml pedir")
-            print("  pelo nome. Sem essas linhas, o cofre nem e consultado.")
+            print("  1. Atualize .github/workflows/painel.yml para a versao mais nova")
+            print("  2. Confira que dados/ml_token.enc aparece no repositorio")
+            print("  3. Se nao aparecer, refaca ml_autorizar + ml_salvar_codigo")
+        elif motivo == "senha_errada":
+            print("  CAUSA: o ML_REFRESH_KEY mudou depois da autorizacao.")
+            print("  Refaca ml_autorizar + ml_salvar_codigo com a senha atual.")
+        elif motivo == "sem_senha":
+            print("  CAUSA: falta o secret ML_REFRESH_KEY.")
         else:
-            print(f"  ML_CLIENT_ID ({len(cid)} caracteres) e ML_CLIENT_SECRET "
-                  f"({len(seg)} caracteres) chegaram, mas nao valeram um token.")
-            print()
-            print("  CAUSA PROVAVEL: a aplicacao no DevCenter esta sem o fluxo")
-            print("  'Client Credentials' habilitado, ou os dois valores estao")
-            print("  trocados de lugar (o App ID e so numeros).")
+            print("  A chave existe, mas o Mercado Livre nao aceitou renova-la.")
+            print("  Refaca ml_autorizar + ml_salvar_codigo.")
         raise SystemExit(1)
     if resp.status_code != 200:
         print(f"    HTTP {resp.status_code}")
