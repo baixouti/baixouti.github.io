@@ -2099,12 +2099,18 @@ def cmd_diagnostico() -> int:
             faltando += 1
             linhas.append("[X]   Mercado Livre ainda nao autorizado")
             linhas.append("        -> Rode a acao 'ml_autorizar' e siga os 5 passos")
-        elif token_ml():
-            linhas.append("[ok]  Mercado Livre autorizado e renovando sozinho")
         else:
-            faltando += 1
-            linhas.append("[X]   A autorizacao do Mercado Livre nao vale mais")
-            linhas.append("        -> Rode 'ml_autorizar' de novo")
+            # De proposito NAO renova aqui: o Mercado Livre invalida a chave
+            # anterior a cada renovacao. Um diagnostico que gasta a chave que
+            # esta diagnosticando quebra exatamente o que veio verificar.
+            _, motivo = ler_refresh()
+            if motivo == "":
+                linhas.append("[ok]  Mercado Livre autorizado "
+                              "(chave guardada em dados/ml_token.enc)")
+            elif motivo == "senha_errada":
+                faltando += 1
+                linhas.append("[X]   O cofre nao abre com o ML_REFRESH_KEY atual")
+                linhas.append("        -> Refaca ml_autorizar + ml_salvar_codigo")
     else:
         ausentes = [n for n, v in (("app_id no config.yaml", cid),
                                    ("ML_CLIENT_SECRET", seg)) if not v]
