@@ -118,18 +118,21 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Guardar o catalogo
-        if: contains(fromJSON('["montar_o_catalogo","adicionar_um_produto","adicionar_varias_urls","processar_fila","ml_salvar_codigo"]'), inputs.acao)
+      # SEMPRE, para qualquer acao. O Mercado Livre troca a chave de renovacao
+      # a cada uso e invalida a anterior: se uma acao renovar e nao commitar a
+      # chave nova, o repositorio fica com uma chave morta e tudo para.
+      - name: Guardar o catalogo e as chaves
+        if: always()
         run: |
           git config user.name  "baixou-bot"
           git config user.email "baixou-bot@users.noreply.github.com"
-          git add catalogo.csv
-          git add -A fila.txt 2>/dev/null || true
           git add -A dados 2>/dev/null || true
+          git add catalogo.csv 2>/dev/null || true
+          git add -A fila.txt 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "Nada mudou no catalogo."
           else
-            git commit -m "catalogo: ${{ inputs.acao }}"
+            git commit -m "${{ inputs.acao }}"
             git push
           fi
 
