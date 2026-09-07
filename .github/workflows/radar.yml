@@ -70,14 +70,22 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Guardar o historico de precos
+        if: always()
         run: |
           git config user.name  "baixou-bot"
           git config user.email "baixou-bot@users.noreply.github.com"
-          git add dados/precos.db
-          git diff --staged --quiet || git commit -m "precos: $(date -u +'%d/%m %H:%M') UTC"
-          git push
+          # O banco pode nao existir ainda (catalogo vazio na primeira rodada).
+          # Sem o -A o git falha e derruba a publicacao do site.
+          git add -A dados 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "Nada de novo no historico."
+          else
+            git commit -m "precos: $(date -u +'%d/%m %H:%M') UTC"
+            git push
+          fi
 
       - uses: actions/upload-pages-artifact@v3
+        if: always()
         with:
           path: site
 
