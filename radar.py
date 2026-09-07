@@ -481,9 +481,25 @@ def buscar_mercadolivre(url: str, sessao: requests.Session, timeout: int) -> tup
 
 # ------------------------------------------------------------------ fachada
 
-def buscar_preco(sku: str, url: str, cfg: dict,
-                 sessao: requests.Session | None = None) -> Leitura | None:
-    """Devolve uma Leitura ou None se o preco nao pode ser lido com confianca."""
+MOTIVOS = {
+    "robots": "o robots.txt da loja proibe leitura automatizada",
+    "bloqueado": "a loja bloqueou o acesso (403) - ela recusa robos",
+    "nao_existe": "pagina nao encontrada (404) - o link pode ter mudado",
+    "http": "a loja respondeu com erro",
+    "rede": "nao consegui conectar na loja",
+    "sem_preco": "a pagina abriu, mas nao publica o preco de forma legivel "
+                 "(provavelmente monta por JavaScript)",
+}
+
+
+def buscar_preco_detalhado(sku: str, url: str, cfg: dict,
+                           sessao: requests.Session | None = None
+                           ) -> tuple[Leitura | None, str]:
+    """Igual a buscar_preco, mas devolve tambem o motivo da falha.
+
+    O motivo importa: 'a loja me bloqueou' e 'a pagina nao tem preco' pedem
+    decisoes diferentes. Sem isso voce fica no escuro.
+    """
     coleta = cfg["coleta"]
     ua = coleta["user_agent"]
     sessao = sessao or requests.Session()
@@ -492,46 +508,56 @@ def buscar_preco(sku: str, url: str, cfg: dict,
         "Accept-Language": "pt-BR,pt;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
     })
-    agora = datetime.now(timezone.utc)
+    momento = datetime.now(timezone.utc)
 
-    # 1. Mercado Livre pela API
     _esperar(coleta["intervalo_segundos"])
     ml = buscar_mercadolivre(url, sessao, coleta["timeout_segundos"])
     if ml:
         preco, disponivel = ml
         return Leitura(sku=sku, preco=preco, disponivel=disponivel,
-                       momento=agora, origem="mercadolivre-api")
+                       momento=momento, origem="mercadolivre-api"), ""
 
-    # 2 e 3. HTML da propria pagina
     if not robots_permite(url, ua):
-        return None
+        return None, "robots"
 
-    html = ""
+    html_pagina, codigo = "", 0
     for tentativa in range(int(coleta["tentativas"])):
         _esperar(coleta["intervalo_segundos"])
         try:
             resp = sessao.get(url, timeout=coleta["timeout_segundos"])
-            if resp.status_code == 200:
-                html = resp.text
+            codigo = resp.status_code
+            if codigo == 200:
+                html_pagina = resp.text
                 break
-            if resp.status_code in (403, 404, 410):
-                return None
+            if codigo in (403, 404, 410):
+                break
         except requests.RequestException:
             if tentativa == int(coleta["tentativas"]) - 1:
-                return None
+                return None, "rede"
             time.sleep(2)
-    if not html:
-        return None
 
-    preco, disponivel = de_jsonld(html)
+    if not html_pagina:
+        if codigo == 403:
+            return None, "bloqueado"
+        if codigo in (404, 410):
+            return None, "nao_existe"
+        return None, "http" if codigo else "rede"
+
+    preco, disponivel = de_jsonld(html_pagina)
     origem = "jsonld"
     if preco is None:
-        preco, disponivel = de_microdados(html)
+        preco, disponivel = de_microdados(html_pagina)
         origem = "microdados"
     if preco is None:
-        return None
+        return None, "sem_preco"
     return Leitura(sku=sku, preco=preco, disponivel=disponivel,
-                   momento=agora, origem=origem)
+                   momento=momento, origem=origem), ""
+
+
+def buscar_preco(sku: str, url: str, cfg: dict,
+                 sessao: requests.Session | None = None) -> Leitura | None:
+    leitura, _ = buscar_preco_detalhado(sku, url, cfg, sessao)
+    return leitura
 
 
 # ======================================================================
@@ -1692,11 +1718,10 @@ def cmd_adicionar_varias(bruto: str, categoria: str, faixa: str) -> int:
 def cmd_adicionar(url: str, categoria: str, faixa: str, silencioso: bool = False) -> int:
     cfg = carregar_config()
     url = limpar(url)
-    leitura = buscar_preco("NOVO", url, cfg)
+    leitura, motivo = buscar_preco_detalhado("NOVO", url, cfg)
     if leitura is None:
-        print(f"nao consegui ler o preco: {url[:70]}")
-        if not silencioso:
-            pass
+        print(f"falhou: {url[:66]}")
+        print(f"        {MOTIVOS.get(motivo, motivo)}")
         return 1
 
     titulo = ""
@@ -1761,7 +1786,8 @@ def cmd_fila() -> int:
         return 0
 
     print(f"{len(linhas)} link(s) na fila.\n")
-    ok, falhou = 0, []
+    cfg = carregar_config()
+    ok, por_motivo = 0, {}
     for i, linha in enumerate(linhas, 1):
         partes = linha.split("|", 2)
         if len(partes) == 3:
@@ -1771,21 +1797,41 @@ def cmd_fila() -> int:
         if not url.startswith("http"):
             continue
         print(f"[{i}/{len(linhas)}] ", end="")
-        if cmd_adicionar(url, categoria or "geral", faixa or "media") == 0:
+        leitura, motivo = buscar_preco_detalhado("NOVO", limpar(url), cfg)
+        if leitura is not None:
+            cmd_adicionar(url, categoria or "geral", faixa or "media")
             ok += 1
         else:
-            falhou.append(url)
+            dominio = urlparse(url).netloc.replace("www.", "")
+            por_motivo.setdefault((dominio, motivo), []).append(url)
+            print(f"falhou: {dominio} - {MOTIVOS.get(motivo, motivo)}")
         print()
 
     arquivo.write_text("# fila processada em "
                        f"{agora():%d/%m/%Y %H:%M} UTC\n", encoding="utf-8")
 
-    print(f"\n{ok} adicionado(s), {len(falhou)} falha(s).")
-    if falhou:
-        print("\nNao consegui ler estes (a loja monta o preco por JavaScript):")
-        for url in falhou:
-            print(f"  {url}")
-        print("\nProcure os mesmos produtos em outra loja.")
+    total_falhas = sum(len(v) for v in por_motivo.values())
+    print(f"\n{'='*60}")
+    print(f"{ok} adicionado(s), {total_falhas} falha(s).")
+
+    if por_motivo:
+        print("\nPOR LOJA E MOTIVO:\n")
+        for (dominio, motivo), urls in sorted(por_motivo.items(),
+                                              key=lambda x: -len(x[1])):
+            print(f"  {len(urls):>3} x  {dominio}")
+            print(f"         {MOTIVOS.get(motivo, motivo)}")
+            if motivo in ("robots", "bloqueado"):
+                print("         -> Esta loja nao quer ser lida por robo. Respeite:")
+                print("            monitore os mesmos produtos onde voce e afiliado.")
+            elif motivo == "sem_preco":
+                print("         -> Procure o mesmo produto no Mercado Livre ou na")
+                print("            Amazon, que publicam o preco de forma legivel.")
+            elif motivo == "nao_existe":
+                print("         -> Confira se copiou o link inteiro.")
+            print()
+
+        print("LEMBRETE: so vale a pena monitorar loja da qual voce e afiliado.")
+        print("Link de loja sem programa de afiliado nao gera comissao nenhuma.")
     return 0
 
 
