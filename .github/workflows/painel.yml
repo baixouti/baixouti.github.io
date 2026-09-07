@@ -19,10 +19,12 @@ on:
           - adicionar_um_produto
           - adicionar_varias_urls
           - processar_fila
+          - ml_autorizar
+          - ml_salvar_codigo
           - testar_uma_url
           - ver_demonstracao
       url:
-        description: "URL(s) do produto. Para varias, separe por espaco ou virgula."
+        description: "URL(s) do produto, ou o codigo TG-... do Mercado Livre"
         required: false
         type: string
       categoria:
@@ -55,6 +57,8 @@ jobs:
       AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
       ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}
       ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}
+      ML_REFRESH_KEY: ${{ secrets.ML_REFRESH_KEY }}
+      ML_REDIRECT_URI: ${{ secrets.ML_REDIRECT_URI }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -91,6 +95,12 @@ jobs:
               if [ -z "$URL" ]; then
                 echo "Preencha o campo URL." | tee saida.txt; exit 1; fi
               python radar.py testar "$URL" | tee saida.txt ;;
+            ml_autorizar)
+              python radar.py ml_autorizar | tee saida.txt ;;
+            ml_salvar_codigo)
+              if [ -z "$URL" ]; then
+                echo "Cole o codigo TG-... no campo URL." | tee saida.txt; exit 1; fi
+              python radar.py ml_codigo "$URL" | tee saida.txt ;;
             processar_fila)
               python radar.py fila | tee saida.txt ;;
             ver_demonstracao)
@@ -109,12 +119,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Guardar o catalogo
-        if: contains(fromJSON('["montar_o_catalogo","adicionar_um_produto","adicionar_varias_urls","processar_fila"]'), inputs.acao)
+        if: contains(fromJSON('["montar_o_catalogo","adicionar_um_produto","adicionar_varias_urls","processar_fila","ml_salvar_codigo"]'), inputs.acao)
         run: |
           git config user.name  "baixou-bot"
           git config user.email "baixou-bot@users.noreply.github.com"
           git add catalogo.csv
           git add -A fila.txt 2>/dev/null || true
+          git add -A dados 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "Nada mudou no catalogo."
           else
