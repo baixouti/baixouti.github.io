@@ -44,3 +44,13 @@ site:
 telegram:
   # Texto do rodape de cada post publicado no canal
   rodape: "Link de afiliado. O preco pode mudar a qualquer momento."
+
+mercadolivre:
+  # O App ID NAO e segredo - ele aparece na URL de autorizacao.
+  # Por isso fica aqui, e nao nos secrets: o GitHub mascara secrets na saida
+  # e o link de autorizacao sairia com *** no lugar do numero.
+  # Troque pelo seu App ID (o numero que fica ao lado da chave secreta).
+  app_id: "114110336362733"
+
+  # Precisa ser exatamente o endereco cadastrado na aplicacao, com a barra final.
+  redirect_uri: "https://baixouti.github.io/"
