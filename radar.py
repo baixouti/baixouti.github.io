@@ -11,7 +11,9 @@ Comandos em `python radar.py ajuda`.
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
+import hashlib
 import html
 import json
 import math
@@ -1406,50 +1408,172 @@ def assinatura(titulo: str) -> str:
 
 _TOKEN_ML: dict[str, Any] = {"valor": None, "expira": 0.0}
 
+AUTORIZACAO_ML = "https://auth.mercadolivre.com.br/authorization"
+TOKEN_ML_URL = "https://api.mercadolibre.com/oauth/token"
+COFRE_ML = RAIZ / "dados" / "ml_token.enc"
 
-def token_ml() -> str:
-    """Devolve um token da API do Mercado Livre, ou string vazia.
 
-    Usa ML_CLIENT_ID + ML_CLIENT_SECRET para pedir um token novo a cada
-    rodada. E o unico jeito que funciona: token do Mercado Livre expira em
-    6 horas, e este projeto roda de 2 em 2 horas - um token colado a mao
-    pararia de funcionar no mesmo dia.
+def _fernet():
+    """Chave de criptografia derivada do secret ML_REFRESH_KEY.
 
-    Sem as credenciais, tenta a busca sem autenticacao mesmo.
+    A chave de renovacao do Mercado Livre NAO pode ficar em texto puro num
+    repositorio publico. Ela e gravada criptografada; a senha vive so no
+    cofre de secrets do GitHub. Quem clonar o repositorio pega um arquivo
+    ilegivel.
     """
-    cid, segredo = env("ML_CLIENT_ID"), env("ML_CLIENT_SECRET")
-    if not (cid and segredo):
+    from cryptography.fernet import Fernet
+
+    senha = env("ML_REFRESH_KEY")
+    if not senha:
+        return None
+    material = hashlib.sha256(senha.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(material))
+
+
+def guardar_refresh(refresh: str) -> bool:
+    cofre = _fernet()
+    if not cofre:
+        print("  ML_REFRESH_KEY nao configurado - nao posso guardar a chave.")
+        return False
+    COFRE_ML.parent.mkdir(parents=True, exist_ok=True)
+    COFRE_ML.write_bytes(cofre.encrypt(json.dumps(
+        {"refresh_token": refresh,
+         "gravado_em": agora().isoformat()}).encode("utf-8")))
+    return True
+
+
+def ler_refresh() -> str:
+    cofre = _fernet()
+    if not cofre or not COFRE_ML.exists():
+        return ""
+    try:
+        return json.loads(cofre.decrypt(COFRE_ML.read_bytes()))["refresh_token"]
+    except Exception:
+        print("  nao consegui abrir o cofre - ML_REFRESH_KEY mudou?")
         return ""
 
+
+def url_autorizacao() -> str:
+    return (f"{AUTORIZACAO_ML}?response_type=code"
+            f"&client_id={env('ML_CLIENT_ID')}"
+            f"&redirect_uri={env('ML_REDIRECT_URI') or 'https://baixouti.github.io/'}")
+
+
+def _trocar(dados: dict[str, str]) -> dict | None:
+    """Fala com o endpoint de token do Mercado Livre."""
+    dados = dict(dados, client_id=env("ML_CLIENT_ID"),
+                 client_secret=env("ML_CLIENT_SECRET"))
+    try:
+        resp = requests.post(TOKEN_ML_URL, data=dados, timeout=25,
+                             headers={"Accept": "application/json",
+                                      "Content-Type":
+                                          "application/x-www-form-urlencoded"})
+    except requests.RequestException as erro:
+        print(f"  nao consegui falar com o Mercado Livre: {erro}")
+        return None
+    if resp.status_code != 200:
+        print(f"  o Mercado Livre recusou (HTTP {resp.status_code}).")
+        try:
+            corpo = resp.json()
+            print(f"  error={corpo.get('error')!r}  message={corpo.get('message')!r}")
+        except ValueError:
+            print(f"  resposta: {resp.text[:250]}")
+        return None
+    return resp.json()
+
+
+def token_ml() -> str:
+    """Devolve um access token valido do Mercado Livre, ou string vazia.
+
+    O Mercado Livre nao aceita o fluxo aplicacao-para-aplicacao. O que ele
+    aceita e voce autorizar a sua propria aplicacao uma vez no navegador;
+    dali sai uma chave de renovacao que vale 6 meses e se renova sozinha a
+    cada uso. E isso que este codigo faz.
+    """
     if _TOKEN_ML["valor"] and time.time() < _TOKEN_ML["expira"]:
         return str(_TOKEN_ML["valor"])
 
-    try:
-        resp = requests.post(
-            "https://api.mercadolibre.com/oauth/token",
-            data={"grant_type": "client_credentials",
-                  "client_id": cid, "client_secret": segredo},
-            headers={"Accept": "application/json",
-                     "Content-Type": "application/x-www-form-urlencoded"},
-            timeout=25)
-    except requests.RequestException as erro:
-        print(f"  nao consegui falar com o Mercado Livre: {erro}")
+    if not (env("ML_CLIENT_ID") and env("ML_CLIENT_SECRET")):
         return ""
 
-    if resp.status_code != 200:
-        print(f"  o Mercado Livre recusou as credenciais (HTTP {resp.status_code}).")
-        try:
-            corpo = resp.json()
-            print(f"  resposta deles: error={corpo.get('error')!r} "
-                  f"message={corpo.get('message')!r}")
-        except ValueError:
-            print(f"  resposta deles: {resp.text[:300]}")
+    refresh = ler_refresh()
+    if not refresh:
         return ""
 
-    dados = resp.json()
+    dados = _trocar({"grant_type": "refresh_token", "refresh_token": refresh})
+    if not dados:
+        return ""
+
+    # O Mercado Livre devolve uma chave de renovacao NOVA a cada uso.
+    # Se nao guardar, a proxima rodada falha.
+    if dados.get("refresh_token"):
+        guardar_refresh(dados["refresh_token"])
     _TOKEN_ML["valor"] = dados.get("access_token")
     _TOKEN_ML["expira"] = time.time() + int(dados.get("expires_in", 21600)) - 300
     return str(_TOKEN_ML["valor"] or "")
+
+
+def cmd_ml_autorizar() -> int:
+    if not (env("ML_CLIENT_ID") and env("ML_CLIENT_SECRET")):
+        print("Faltam os secrets ML_CLIENT_ID e ML_CLIENT_SECRET.")
+        return 1
+    if not env("ML_REFRESH_KEY"):
+        print("Falta o secret ML_REFRESH_KEY.")
+        print("Invente uma senha longa qualquer e salve com esse nome.")
+        return 1
+
+    url = url_autorizacao()
+    texto = (
+        "1. Abra este endereco no navegador, logado na sua conta do Mercado Livre:\n\n"
+        f"   {url}\n\n"
+        "2. Clique em autorizar.\n\n"
+        "3. Voce cai numa pagina que pode dar erro ou ficar em branco. Nao importa.\n"
+        "   Olhe a BARRA DE ENDERECO: ela vai ter ...?code=TG-xxxxxxxxxxxx\n\n"
+        "4. Copie so o pedaco depois de code= (comeca com TG-).\n\n"
+        "5. Volte no Painel, acao 'ml_salvar_codigo', e cole no campo URL.\n\n"
+        "O codigo vale poucos minutos. Se demorar, refaca do passo 1."
+    )
+    print(texto)
+    resumo = os.environ.get("GITHUB_STEP_SUMMARY")
+    if resumo:
+        with open(resumo, "a", encoding="utf-8") as f:
+            f.write("## Autorizar o Mercado Livre\n\n")
+            f.write(f"**[Clique aqui para autorizar]({url})**\n\n")
+            f.write("Depois de autorizar, copie o `code=TG-...` da barra de "
+                    "endereco e use a acao `ml_salvar_codigo`.\n")
+    return 0
+
+
+def cmd_ml_codigo(codigo: str) -> int:
+    codigo = codigo.strip()
+    if "code=" in codigo:
+        codigo = codigo.split("code=", 1)[1].split("&")[0]
+    if not codigo:
+        print("Cole o codigo que aparece depois de code= na barra de endereco.")
+        return 1
+
+    dados = _trocar({
+        "grant_type": "authorization_code",
+        "code": codigo,
+        "redirect_uri": env("ML_REDIRECT_URI") or "https://baixouti.github.io/",
+    })
+    if not dados:
+        print("\nSe deu 'invalid_grant': o codigo expirou ou ja foi usado.")
+        print("Cada codigo serve uma vez so. Refaca a autorizacao.")
+        print("Se deu erro de redirect_uri: o endereco cadastrado na aplicacao")
+        print("precisa ser exatamente https://baixouti.github.io/ (com a barra).")
+        return 1
+
+    if not dados.get("refresh_token"):
+        print("O Mercado Livre nao devolveu chave de renovacao.")
+        return 1
+    if not guardar_refresh(dados["refresh_token"]):
+        return 1
+
+    print("Autorizacao concluida. A chave foi gravada criptografada em")
+    print("dados/ml_token.enc e se renova sozinha a partir de agora.")
+    print("\nPode rodar 'montar_o_catalogo'.")
+    return 0
 
 
 def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[dict]:
@@ -1916,13 +2040,21 @@ def cmd_diagnostico() -> int:
     if cid and seg:
         linhas.append(f"[ok]  ML_CLIENT_ID chegou ({len(cid)} caracteres)")
         linhas.append(f"[ok]  ML_CLIENT_SECRET chegou ({len(seg)} caracteres)")
-        if token_ml():
-            linhas.append("[ok]  Mercado Livre aceitou as credenciais")
+        if not env("ML_REFRESH_KEY"):
+            faltando += 1
+            linhas.append("[X]   Falta o secret ML_REFRESH_KEY")
+            linhas.append("        -> Invente uma senha longa e salve com esse nome. "
+                          "Ela protege a chave do Mercado Livre no repositorio.")
+        elif not COFRE_ML.exists():
+            faltando += 1
+            linhas.append("[X]   Mercado Livre ainda nao autorizado")
+            linhas.append("        -> Rode a acao 'ml_autorizar' e siga os 5 passos")
+        elif token_ml():
+            linhas.append("[ok]  Mercado Livre autorizado e renovando sozinho")
         else:
             faltando += 1
-            linhas.append("[X]   Mercado Livre recusou as credenciais")
-            linhas.append("        -> Confira se ML_CLIENT_ID e o App ID (so numeros) "
-                          "e se a aplicacao tem 'Client Credentials' habilitado")
+            linhas.append("[X]   A autorizacao do Mercado Livre nao vale mais")
+            linhas.append("        -> Rode 'ml_autorizar' de novo")
     else:
         ausentes = [n for n, v in (("ML_CLIENT_ID", cid), ("ML_CLIENT_SECRET", seg)) if not v]
         if ausentes:
@@ -1967,6 +2099,9 @@ AJUDA = """Baixou - comandos
   python radar.py adicionar URL [categoria] [faixa]
   python radar.py adicionar_varias "URL1 URL2 URL3" [categoria] [faixa]
   python radar.py fila            processa fila.txt (gravada pela pagina web)
+
+  python radar.py ml_autorizar    gera o link de autorizacao do Mercado Livre
+  python radar.py ml_codigo TG-x  guarda o codigo devolvido pela autorizacao
   python radar.py testar URL      testa a leitura de preco de uma pagina
 
   python radar.py diagnostico     confere se tudo esta configurado
@@ -1987,6 +2122,11 @@ def main(argv: list[str]) -> int:
         ap.add_argument("--anexar", action="store_true")
         args = ap.parse_args(resto)
         return cmd_catalogo(args.por_termo, args.anexar)
+    if comando == "ml_codigo":
+        if not resto:
+            print("uso: python radar.py ml_codigo <codigo TG-...>")
+            return 2
+        return cmd_ml_codigo(resto[0])
     if comando in ("adicionar", "adicionar_varias"):
         if not resto:
             print(f"uso: python radar.py {comando} <url(s)> [categoria] [faixa]")
@@ -2006,6 +2146,7 @@ def main(argv: list[str]) -> int:
         "coletar": cmd_coletar, "detectar": cmd_detectar, "aprovacoes": cmd_aprovacoes,
         "site": cmd_site, "rodada": cmd_rodada, "diagnostico": cmd_diagnostico,
         "chatid": cmd_chatid, "demonstracao": cmd_demonstracao, "fila": cmd_fila,
+        "ml_autorizar": cmd_ml_autorizar,
     }
     if comando not in acoes:
         print(f"comando desconhecido: {comando}\n")
