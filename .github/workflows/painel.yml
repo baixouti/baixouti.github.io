@@ -48,6 +48,12 @@ on:
 permissions:
   contents: write
 
+# Mesmo grupo do Radar automatico: os dois renovam a chave rotativa
+# do Mercado Livre, e rodar em paralelo faria um invalidar a do outro.
+concurrency:
+  group: radar
+  cancel-in-progress: false
+
 jobs:
   painel:
     runs-on: ubuntu-latest
