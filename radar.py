@@ -1792,49 +1792,18 @@ def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[di
         print(f"    erro de rede: {erro}")
         return []
     if resp.status_code in (401, 403):
-        print("\n  O Mercado Livre recusou a busca por falta de autorizacao.\n")
-        _, motivo = ler_refresh()
-        if motivo == "sem_cofre":
-            print("  CAUSA: o arquivo dados/ml_token.enc nao esta no repositorio.")
-            print()
-            print("  A autorizacao deu certo, mas o arquivo com a chave nao chegou a")
-            print("  ser gravado no repositorio. Isso acontece quando o painel.yml e")
-            print("  uma versao antiga, que nao commitava a pasta dados.")
-            print()
-            print("  1. Atualize .github/workflows/painel.yml para a versao mais nova")
-            print("  2. Confira que dados/ml_token.enc aparece no repositorio")
-            print("  3. Se nao aparecer, refaca ml_autorizar + ml_salvar_codigo")
-        elif motivo == "senha_errada":
-            print("  CAUSA: o ML_REFRESH_KEY mudou depois da autorizacao.")
-            print("  Refaca ml_autorizar + ml_salvar_codigo com a senha atual.")
-        elif motivo == "sem_senha":
-            print("  CAUSA: falta o secret ML_REFRESH_KEY.")
-        elif not ULTIMO_ERRO_ML:
-            print("  A chave esta boa: a renovacao funcionou. Quem recusou foi o")
-            print("  endpoint de BUSCA - o Mercado Livre nao libera busca em massa")
-            print("  para esta aplicacao.")
-            print()
-            print("  Isso nao impede o projeto. Rode 'ml_testar' com o link de um")
-            print("  produto para ver se a LEITURA de preco esta liberada; se")
-            print("  estiver, monte o catalogo pela pagina adicionar.html e o")
-            print("  monitoramento funciona normalmente.")
-        else:
-            print("  A chave existe, mas o Mercado Livre recusou renova-la.")
-            if ULTIMO_ERRO_ML:
-                print()
-                print(f"  RESPOSTA DELES: HTTP {ULTIMO_ERRO_ML.get('http')}")
-                print(f"  error   = {ULTIMO_ERRO_ML.get('error')!r}")
-                print(f"  message = {ULTIMO_ERRO_ML.get('message')!r}")
-                if ULTIMO_ERRO_ML.get("cause"):
-                    print(f"  cause   = {ULTIMO_ERRO_ML.get('cause')!r}")
-                print()
-                if ULTIMO_ERRO_ML.get("error") == "invalid_grant":
-                    print("  invalid_grant = a chave ja foi usada ou expirou.")
-                    print("  Refaca a autorizacao e confira que o ml_salvar_codigo")
-                    print("  terminou com 'Autorizacao concluida'.")
-                elif ULTIMO_ERRO_ML.get("error") == "invalid_client":
-                    print("  invalid_client = App ID ou Client Secret nao batem com")
-                    print("  a aplicacao. Confira os dois no DevCenter.")
+        print("\n  A BUSCA EM MASSA nao esta disponivel para esta aplicacao.")
+        print("  O Mercado Livre so libera esse endpoint para parceiros aprovados,")
+        print("  e nao ha configuracao que resolva pelo seu lado.")
+        print()
+        print("  Isso NAO afeta o projeto: a leitura de preco de cada produto")
+        print("  funciona normalmente, e e dela que a coleta diaria depende.")
+        print()
+        print("  Monte o catalogo colando links em:")
+        print("      https://baixouti.github.io/adicionar.html")
+        print()
+        print("  Navegue no Mercado Livre, use o filtro de preco da barra lateral")
+        print("  para separar as faixas, e cole os links em lotes.")
         raise SystemExit(1)
     if resp.status_code != 200:
         print(f"    HTTP {resp.status_code}")
