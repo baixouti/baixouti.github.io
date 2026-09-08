@@ -83,10 +83,17 @@ jobs:
           git add -A dados 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "Nada de novo no historico."
-          else
-            git commit -m "precos: $(date -u +'%d/%m %H:%M') UTC"
-            git push
+            exit 0
           fi
+          git commit -m "precos: $(date -u +'%d/%m %H:%M') UTC"
+          for tentativa in 1 2 3; do
+            git push && exit 0
+            echo "push falhou (tentativa $tentativa) - repetindo"
+            git pull --rebase --autostash origin main || true
+            sleep 3
+          done
+          echo "::error::Nao consegui gravar o historico no repositorio."
+          exit 1
 
       - uses: actions/upload-pages-artifact@v3
         if: always()
