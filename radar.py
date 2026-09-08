@@ -1411,6 +1411,7 @@ _TOKEN_ML: dict[str, Any] = {"valor": None, "expira": 0.0}
 AUTORIZACAO_ML = "https://auth.mercadolivre.com.br/authorization"
 TOKEN_ML_URL = "https://api.mercadolibre.com/oauth/token"
 COFRE_ML = RAIZ / "dados" / "ml_token.enc"
+ULTIMO_ERRO_ML: dict[str, Any] = {}
 
 
 def app_id_ml() -> str:
@@ -1503,13 +1504,18 @@ def _trocar(dados: dict[str, str]) -> dict | None:
         print(f"  nao consegui falar com o Mercado Livre: {erro}")
         return None
     if resp.status_code != 200:
-        print(f"  o Mercado Livre recusou (HTTP {resp.status_code}).")
         try:
             corpo = resp.json()
-            print(f"  error={corpo.get('error')!r}  message={corpo.get('message')!r}")
         except ValueError:
-            print(f"  resposta: {resp.text[:250]}")
+            corpo = {"message": resp.text[:250]}
+        ULTIMO_ERRO_ML.clear()
+        ULTIMO_ERRO_ML.update({"http": resp.status_code, "error": corpo.get("error"),
+                               "message": corpo.get("message"),
+                               "cause": corpo.get("cause")})
+        print(f"  o Mercado Livre recusou (HTTP {resp.status_code}): "
+              f"error={corpo.get('error')!r} message={corpo.get('message')!r}")
         return None
+    ULTIMO_ERRO_ML.clear()
     return resp.json()
 
 
@@ -1548,6 +1554,38 @@ def token_ml() -> str:
     _TOKEN_ML["valor"] = dados.get("access_token")
     _TOKEN_ML["expira"] = time.time() + int(dados.get("expires_in", 21600)) - 300
     return str(_TOKEN_ML["valor"] or "")
+
+
+def cmd_ml_testar() -> int:
+    """Testa so a renovacao da chave do Mercado Livre, sem tocar no catalogo."""
+    print("App ID         :", app_id_ml() or "(vazio)")
+    print("Client Secret  :", f"{len(env('ML_CLIENT_SECRET'))} caracteres"
+          if env("ML_CLIENT_SECRET") else "(vazio)")
+    print("Redirect       :", redirect_ml())
+    print("ML_REFRESH_KEY :", "definido" if env("ML_REFRESH_KEY") else "(vazio)")
+    print("Cofre existe   :", COFRE_ML.exists(),
+          f"({COFRE_ML.stat().st_size} bytes)" if COFRE_ML.exists() else "")
+
+    chave, motivo = ler_refresh()
+    print("Cofre abre     :", "sim" if chave else f"nao ({motivo})")
+    if not chave:
+        print("\nNao ha o que testar. Refaca ml_autorizar + ml_salvar_codigo.")
+        return 1
+
+    print("\nTentando renovar...")
+    dados = _trocar({"grant_type": "refresh_token", "refresh_token": chave})
+    if not dados:
+        print("\nFALHOU. Resposta do Mercado Livre:")
+        for campo in ("http", "error", "message", "cause"):
+            if ULTIMO_ERRO_ML.get(campo) is not None:
+                print(f"  {campo:8} = {ULTIMO_ERRO_ML[campo]!r}")
+        return 1
+
+    if dados.get("refresh_token"):
+        guardar_refresh(dados["refresh_token"])
+        print("Chave nova gravada no cofre.")
+    print(f"\nFUNCIONOU. Acesso valido por {dados.get('expires_in')} segundos.")
+    return 0
 
 
 def cmd_ml_autorizar() -> int:
@@ -1654,8 +1692,22 @@ def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[di
         elif motivo == "sem_senha":
             print("  CAUSA: falta o secret ML_REFRESH_KEY.")
         else:
-            print("  A chave existe, mas o Mercado Livre nao aceitou renova-la.")
-            print("  Refaca ml_autorizar + ml_salvar_codigo.")
+            print("  A chave existe, mas o Mercado Livre recusou renova-la.")
+            if ULTIMO_ERRO_ML:
+                print()
+                print(f"  RESPOSTA DELES: HTTP {ULTIMO_ERRO_ML.get('http')}")
+                print(f"  error   = {ULTIMO_ERRO_ML.get('error')!r}")
+                print(f"  message = {ULTIMO_ERRO_ML.get('message')!r}")
+                if ULTIMO_ERRO_ML.get("cause"):
+                    print(f"  cause   = {ULTIMO_ERRO_ML.get('cause')!r}")
+                print()
+                if ULTIMO_ERRO_ML.get("error") == "invalid_grant":
+                    print("  invalid_grant = a chave ja foi usada ou expirou.")
+                    print("  Refaca a autorizacao e confira que o ml_salvar_codigo")
+                    print("  terminou com 'Autorizacao concluida'.")
+                elif ULTIMO_ERRO_ML.get("error") == "invalid_client":
+                    print("  invalid_client = App ID ou Client Secret nao batem com")
+                    print("  a aplicacao. Confira os dois no DevCenter.")
         raise SystemExit(1)
     if resp.status_code != 200:
         print(f"    HTTP {resp.status_code}")
@@ -2203,7 +2255,7 @@ def main(argv: list[str]) -> int:
         "coletar": cmd_coletar, "detectar": cmd_detectar, "aprovacoes": cmd_aprovacoes,
         "site": cmd_site, "rodada": cmd_rodada, "diagnostico": cmd_diagnostico,
         "chatid": cmd_chatid, "demonstracao": cmd_demonstracao, "fila": cmd_fila,
-        "ml_autorizar": cmd_ml_autorizar,
+        "ml_autorizar": cmd_ml_autorizar, "ml_testar": cmd_ml_testar,
     }
     if comando not in acoes:
         print(f"comando desconhecido: {comando}\n")
