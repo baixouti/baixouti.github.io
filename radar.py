@@ -454,42 +454,84 @@ def de_microdados(html: str) -> tuple[float | None, bool]:
 
 # ------------------------------------------------------------ fonte: ML
 
-_ML_ID = re.compile(r"(ML[A-Z]-?\d{6,})", re.I)
+_ML_ITEM = re.compile(r"/(MLB-?\d{6,})", re.I)
+_ML_PRODUTO = re.compile(r"/p/(MLB-?\d{6,})", re.I)
 
 
-def id_mercadolivre(url: str) -> str | None:
-    achado = _ML_ID.search(url)
-    return achado.group(1).upper().replace("-", "") if achado else None
+def id_mercadolivre(url: str) -> tuple[str, str] | None:
+    """Descobre se a URL e de um anuncio ou de uma pagina de catalogo.
+
+    O Mercado Livre tem dois tipos de identificador, e cada um vive num
+    endpoint diferente:
+
+      produto.mercadolivre.com.br/MLB-1234567890-nome  -> anuncio  -> /items/
+      mercadolivre.com.br/nome-do-produto/p/MLB1234567 -> catalogo -> /products/
+
+    Chamar o endpoint errado devolve 404 mesmo com o produto existindo.
+    """
+    achado = _ML_PRODUTO.search(url)
+    if achado:
+        return "produto", achado.group(1).upper().replace("-", "")
+    achado = _ML_ITEM.search(url)
+    if achado:
+        return "item", achado.group(1).upper().replace("-", "")
+    return None
 
 
-def buscar_mercadolivre(url: str, sessao: requests.Session, timeout: int) -> tuple[float, bool] | None:
+def _preco_do_produto(dados: dict) -> tuple[float, bool] | None:
+    """Extrai preco de uma resposta de /products/ (pagina de catalogo)."""
+    vencedor = dados.get("buy_box_winner") or {}
+    preco = _normalizar(vencedor.get("price"))
+    if preco is None:
+        return None
+    disponivel = str(dados.get("status", "active")).lower() == "active"
+    return preco, disponivel
+
+
+def buscar_mercadolivre(url: str, sessao: requests.Session,
+                        timeout: int) -> tuple[float, bool] | None:
     """Le o preco pela API oficial.
 
-    O Mercado Livre proibe a leitura das paginas por robots.txt, entao a API e
-    o unico caminho - inclusive para a coleta de todo dia, nao so para montar
-    o catalogo. Por isso o token entra aqui tambem.
+    O Mercado Livre proibe a leitura das paginas por robots.txt, entao a API
+    e o unico caminho - inclusive para a coleta de todo dia.
     """
-    item = id_mercadolivre(url)
-    if not item:
+    achado = id_mercadolivre(url)
+    if not achado:
         return None
+    tipo, identificador = achado
+
     cabecalhos = {}
     token = token_ml()
     if token:
         cabecalhos["Authorization"] = f"Bearer {token}"
-    try:
-        resp = sessao.get(f"https://api.mercadolibre.com/items/{item}",
-                          headers=cabecalhos, timeout=timeout)
-        if resp.status_code != 200:
-            return None
-        dados = resp.json()
-    except (requests.RequestException, ValueError):
-        return None
-    preco = _normalizar(dados.get("price"))
-    if preco is None:
-        return None
-    disponivel = str(dados.get("status", "")).lower() == "active" and \
-        int(dados.get("available_quantity") or 0) > 0
-    return preco, disponivel
+
+    # Tenta primeiro o endpoint que a URL indica; se falhar, tenta o outro,
+    # porque links do Mercado Livre nem sempre seguem o padrao esperado.
+    ordem = (["produto", "item"] if tipo == "produto" else ["item", "produto"])
+    for tentativa in ordem:
+        caminho = "products" if tentativa == "produto" else "items"
+        try:
+            resp = sessao.get(f"https://api.mercadolibre.com/{caminho}/{identificador}",
+                              headers=cabecalhos, timeout=timeout)
+            if resp.status_code != 200:
+                continue
+            dados = resp.json()
+        except (requests.RequestException, ValueError):
+            continue
+
+        if tentativa == "produto":
+            resultado = _preco_do_produto(dados)
+            if resultado:
+                return resultado
+            continue
+
+        preco = _normalizar(dados.get("price"))
+        if preco is None:
+            continue
+        disponivel = (str(dados.get("status", "")).lower() == "active"
+                      and int(dados.get("available_quantity") or 0) > 0)
+        return preco, disponivel
+    return None
 
 
 # ------------------------------------------------------------------ fachada
@@ -1630,11 +1672,19 @@ def cmd_ml_testar(exemplo: str = "") -> int:
     tentar("users/me      ", "https://api.mercadolibre.com/users/me")
 
     print("\n--- 3. LER UM PRODUTO (a coleta de todo dia depende disto) ---")
-    item = id_mercadolivre(exemplo) if exemplo else ""
-    if not item:
-        item = "MLB1234567890"
-        print("(sem exemplo informado - usando um ID falso so para ver o codigo)")
-    lendo = tentar(f"items/{item}", f"https://api.mercadolibre.com/items/{item}")
+    achado = id_mercadolivre(exemplo) if exemplo else None
+    if achado:
+        tipo, identificador = achado
+        print(f"(o link informado e do tipo '{tipo}': {identificador})")
+    else:
+        tipo, identificador = "item", "MLB1234567890"
+        print("(sem link informado - usando um ID falso so para ver o codigo)")
+
+    lendo_item = tentar(f"items/{identificador}   ",
+                        f"https://api.mercadolibre.com/items/{identificador}")
+    lendo_prod = tentar(f"products/{identificador}",
+                        f"https://api.mercadolibre.com/products/{identificador}")
+    lendo = lendo_item or lendo_prod
 
     print("\n--- 4. BUSCAR PRODUTOS (montar o catalogo depende disto) ---")
     buscando = tentar("sites/MLB/search",
@@ -1648,7 +1698,7 @@ def cmd_ml_testar(exemplo: str = "") -> int:
         print("Busca FECHADA, leitura de produto LIBERADA.")
         print()
         print("Isso significa: montar o catalogo automaticamente nao da, mas")
-        print("monitorar precos do Mercado Livre da, e e o que importa.")
+        print("MONITORAR PRECOS DO MERCADO LIVRE DA - e e o que importa.")
         print("Monte o catalogo colando links na pagina adicionar.html.")
     else:
         print("Nem busca nem leitura de produto. O Mercado Livre esta fora.")
