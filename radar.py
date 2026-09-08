@@ -463,11 +463,22 @@ def id_mercadolivre(url: str) -> str | None:
 
 
 def buscar_mercadolivre(url: str, sessao: requests.Session, timeout: int) -> tuple[float, bool] | None:
+    """Le o preco pela API oficial.
+
+    O Mercado Livre proibe a leitura das paginas por robots.txt, entao a API e
+    o unico caminho - inclusive para a coleta de todo dia, nao so para montar
+    o catalogo. Por isso o token entra aqui tambem.
+    """
     item = id_mercadolivre(url)
     if not item:
         return None
+    cabecalhos = {}
+    token = token_ml()
+    if token:
+        cabecalhos["Authorization"] = f"Bearer {token}"
     try:
-        resp = sessao.get(f"https://api.mercadolibre.com/items/{item}", timeout=timeout)
+        resp = sessao.get(f"https://api.mercadolibre.com/items/{item}",
+                          headers=cabecalhos, timeout=timeout)
         if resp.status_code != 200:
             return None
         dados = resp.json()
