@@ -109,7 +109,7 @@ jobs:
                 echo "Cole o codigo TG-... no campo URL." | tee saida.txt; exit 1; fi
               python radar.py ml_codigo "$URL" | tee saida.txt ;;
             ml_testar)
-              python radar.py ml_testar | tee saida.txt ;;
+              python radar.py ml_testar "$URL" | tee saida.txt ;;
             processar_fila)
               python radar.py fila | tee saida.txt ;;
             ver_demonstracao)
