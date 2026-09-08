@@ -1567,35 +1567,87 @@ def token_ml() -> str:
     return str(_TOKEN_ML["valor"] or "")
 
 
-def cmd_ml_testar() -> int:
-    """Testa so a renovacao da chave do Mercado Livre, sem tocar no catalogo."""
+def cmd_ml_testar(exemplo: str = "") -> int:
+    """Mapeia exatamente o que o token do Mercado Livre alcanca.
+
+    Renovar a chave e uma coisa; ter permissao num endpoint e outra. Este
+    comando separa as duas, para nao confundir 'chave morta' com 'endpoint
+    fechado' - que foi o que nos custou varias rodadas.
+    """
     print("App ID         :", app_id_ml() or "(vazio)")
     print("Client Secret  :", f"{len(env('ML_CLIENT_SECRET'))} caracteres"
           if env("ML_CLIENT_SECRET") else "(vazio)")
-    print("Redirect       :", redirect_ml())
-    print("ML_REFRESH_KEY :", "definido" if env("ML_REFRESH_KEY") else "(vazio)")
     print("Cofre existe   :", COFRE_ML.exists(),
           f"({COFRE_ML.stat().st_size} bytes)" if COFRE_ML.exists() else "")
 
     chave, motivo = ler_refresh()
     print("Cofre abre     :", "sim" if chave else f"nao ({motivo})")
     if not chave:
-        print("\nNao ha o que testar. Refaca ml_autorizar + ml_salvar_codigo.")
+        print("\nRefaca ml_autorizar + ml_salvar_codigo.")
         return 1
 
-    print("\nTentando renovar...")
+    print("\n--- 1. renovar a chave ---")
     dados = _trocar({"grant_type": "refresh_token", "refresh_token": chave})
     if not dados:
-        print("\nFALHOU. Resposta do Mercado Livre:")
-        for campo in ("http", "error", "message", "cause"):
-            if ULTIMO_ERRO_ML.get(campo) is not None:
-                print(f"  {campo:8} = {ULTIMO_ERRO_ML[campo]!r}")
+        print("FALHOU:", {k: v for k, v in ULTIMO_ERRO_ML.items() if v is not None})
+        print("\nA chave morreu. Refaca ml_autorizar + ml_salvar_codigo.")
         return 1
-
     if dados.get("refresh_token"):
         guardar_refresh(dados["refresh_token"])
-        print("Chave nova gravada no cofre.")
-    print(f"\nFUNCIONOU. Acesso valido por {dados.get('expires_in')} segundos.")
+    token = dados["access_token"]
+    _TOKEN_ML["valor"] = token
+    _TOKEN_ML["expira"] = time.time() + int(dados.get("expires_in", 21600)) - 300
+    print(f"OK - acesso valido por {dados.get('expires_in')}s")
+
+    sessao = requests.Session()
+    sessao.headers["Authorization"] = f"Bearer {token}"
+    sessao.headers["User-Agent"] = "BaixouBot/1.0"
+
+    def tentar(nome: str, url: str, params: dict | None = None) -> bool:
+        try:
+            resp = sessao.get(url, params=params, timeout=25)
+        except requests.RequestException as erro:
+            print(f"{nome}: erro de rede - {erro}")
+            return False
+        if resp.status_code == 200:
+            print(f"{nome}: OK")
+            return True
+        detalhe = ""
+        try:
+            corpo = resp.json()
+            detalhe = f" error={corpo.get('error')!r} message={corpo.get('message')!r}"
+        except ValueError:
+            detalhe = f" {resp.text[:120]}"
+        print(f"{nome}: HTTP {resp.status_code}{detalhe}")
+        return False
+
+    print("\n--- 2. o token e reconhecido? ---")
+    tentar("users/me      ", "https://api.mercadolibre.com/users/me")
+
+    print("\n--- 3. LER UM PRODUTO (a coleta de todo dia depende disto) ---")
+    item = id_mercadolivre(exemplo) if exemplo else ""
+    if not item:
+        item = "MLB1234567890"
+        print("(sem exemplo informado - usando um ID falso so para ver o codigo)")
+    lendo = tentar(f"items/{item}", f"https://api.mercadolibre.com/items/{item}")
+
+    print("\n--- 4. BUSCAR PRODUTOS (montar o catalogo depende disto) ---")
+    buscando = tentar("sites/MLB/search",
+                      "https://api.mercadolibre.com/sites/MLB/search",
+                      {"q": "ssd nvme", "limit": 1})
+
+    print("\n" + "=" * 58)
+    if buscando:
+        print("Busca liberada: pode rodar montar_o_catalogo.")
+    elif lendo:
+        print("Busca FECHADA, leitura de produto LIBERADA.")
+        print()
+        print("Isso significa: montar o catalogo automaticamente nao da, mas")
+        print("monitorar precos do Mercado Livre da, e e o que importa.")
+        print("Monte o catalogo colando links na pagina adicionar.html.")
+    else:
+        print("Nem busca nem leitura de produto. O Mercado Livre esta fora.")
+        print("Use Amazon e Shopee, cujos programas de afiliado voce vai ter.")
     return 0
 
 
@@ -1702,6 +1754,15 @@ def buscar_ml(termo: str, sessao: requests.Session, limite: int = 25) -> list[di
             print("  Refaca ml_autorizar + ml_salvar_codigo com a senha atual.")
         elif motivo == "sem_senha":
             print("  CAUSA: falta o secret ML_REFRESH_KEY.")
+        elif not ULTIMO_ERRO_ML:
+            print("  A chave esta boa: a renovacao funcionou. Quem recusou foi o")
+            print("  endpoint de BUSCA - o Mercado Livre nao libera busca em massa")
+            print("  para esta aplicacao.")
+            print()
+            print("  Isso nao impede o projeto. Rode 'ml_testar' com o link de um")
+            print("  produto para ver se a LEITURA de preco esta liberada; se")
+            print("  estiver, monte o catalogo pela pagina adicionar.html e o")
+            print("  monitoramento funciona normalmente.")
         else:
             print("  A chave existe, mas o Mercado Livre recusou renova-la.")
             if ULTIMO_ERRO_ML:
@@ -2242,6 +2303,8 @@ def main(argv: list[str]) -> int:
         ap.add_argument("--anexar", action="store_true")
         args = ap.parse_args(resto)
         return cmd_catalogo(args.por_termo, args.anexar)
+    if comando == "ml_testar":
+        return cmd_ml_testar(resto[0] if resto else "")
     if comando == "ml_codigo":
         if not resto:
             print("uso: python radar.py ml_codigo <codigo TG-...>")
@@ -2266,7 +2329,7 @@ def main(argv: list[str]) -> int:
         "coletar": cmd_coletar, "detectar": cmd_detectar, "aprovacoes": cmd_aprovacoes,
         "site": cmd_site, "rodada": cmd_rodada, "diagnostico": cmd_diagnostico,
         "chatid": cmd_chatid, "demonstracao": cmd_demonstracao, "fila": cmd_fila,
-        "ml_autorizar": cmd_ml_autorizar, "ml_testar": cmd_ml_testar,
+        "ml_autorizar": cmd_ml_autorizar,
     }
     if comando not in acoes:
         print(f"comando desconhecido: {comando}\n")
