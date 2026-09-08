@@ -1598,6 +1598,11 @@ def cmd_ml_testar(exemplo: str = "") -> int:
     _TOKEN_ML["valor"] = token
     _TOKEN_ML["expira"] = time.time() + int(dados.get("expires_in", 21600)) - 300
     print(f"OK - acesso valido por {dados.get('expires_in')}s")
+    escopos = dados.get("scope") or "(o Mercado Livre nao informou)"
+    print(f"Permissoes do token: {escopos}")
+    if "read" not in str(escopos):
+        print("  ATENCAO: sem a permissao 'read', nenhum endpoint de produto abre.")
+        print("  Ajuste as permissoes da aplicacao no DevCenter e reautorize.")
 
     sessao = requests.Session()
     sessao.headers["Authorization"] = f"Bearer {token}"
