@@ -139,11 +139,26 @@ jobs:
           git add catalogo.csv 2>/dev/null || true
           git add -A fila.txt 2>/dev/null || true
           if git diff --staged --quiet; then
-            echo "Nada mudou no catalogo."
-          else
-            git commit -m "${{ inputs.acao }}"
-            git push
+            echo "Nada mudou."
+            exit 0
           fi
+          git commit -m "${{ inputs.acao }}"
+          # A chave do Mercado Livre e rotativa: se este push falhar, a chave
+          # nova se perde e a anterior ja foi invalidada por eles. Entao aqui
+          # a gente insiste, e falha alto se nao conseguir.
+          for tentativa in 1 2 3; do
+            if git push; then
+              echo "Gravado no repositorio."
+              exit 0
+            fi
+            echo "push falhou (tentativa $tentativa) - trazendo o que mudou e repetindo"
+            git pull --rebase --autostash origin main || true
+            sleep 3
+          done
+          echo "::error::Nao consegui gravar dados/ml_token.enc no repositorio."
+          echo "A chave do Mercado Livre foi renovada mas nao ficou salva."
+          echo "Refaca ml_autorizar + ml_salvar_codigo."
+          exit 1
 
       - uses: actions/upload-artifact@v4
         if: inputs.acao == 'ver_demonstracao'
